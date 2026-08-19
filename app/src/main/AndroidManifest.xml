@@ -5,8 +5,8 @@
 
     <application
         android:allowBackup="true"
-        android:label="Повторы"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:label="APEX"
+        android:theme="@android:theme="@style/SplashTheme">
 
         <activity
             android:name=".MainActivity"
