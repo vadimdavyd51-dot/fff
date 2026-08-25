@@ -1044,6 +1044,112 @@
 
 <script>
 (function(){
+  // ==== ПОДПИСКА ====
+  // Впиши сюда адрес своего сервера после того, как развернёшь его на VPS
+  // (см. apex-server/README.md). Пример: 'https://apex.твой-домен.ру'
+  const API_BASE = 'https://ЗАМЕНИ-НА-АДРЕС-СЕРВЕРА';
+
+  let license = { loading: true, hasAccess: true, trialActive: true, trialDaysLeft: null, subscribed: false, priceRub: 199, subscriptionDays: 30, error: false };
+
+  function getDeviceId(){
+    let id = localStorage.getItem('apex-device-id');
+    if(!id){
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('dev-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+      localStorage.setItem('apex-device-id', id);
+    }
+    return id;
+  }
+
+  async function initLicense(){
+    if(API_BASE.indexOf('ЗАМЕНИ') !== -1){
+      // сервер ещё не подключён — не блокируем работу приложения
+      license = { loading:false, hasAccess:true, trialActive:true, trialDaysLeft:null, subscribed:false, priceRub:199, subscriptionDays:30, error:false };
+      render();
+      return;
+    }
+    try{
+      let token = localStorage.getItem('apex-license-token');
+      let data;
+      if(!token){
+        const r = await fetch(API_BASE + '/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId: getDeviceId() })
+        });
+        data = await r.json();
+        if(data.token){ localStorage.setItem('apex-license-token', data.token); }
+      } else {
+        const r = await fetch(API_BASE + '/api/status', { headers: { 'Authorization': 'Bearer ' + token } });
+        data = await r.json();
+      }
+      license = {
+        loading: false,
+        hasAccess: !!data.hasAccess,
+        trialActive: !!data.trialActive,
+        trialDaysLeft: data.trialDaysLeft,
+        subscribed: !!data.subscribed,
+        priceRub: data.priceRub || 199,
+        subscriptionDays: data.subscriptionDays || 30,
+        error: false
+      };
+    }catch(e){
+      // сервер недоступен (нет сети и т.п.) — не блокируем, чтобы не портить офлайн-использование
+      license = { loading:false, hasAccess:true, trialActive:true, trialDaysLeft:null, subscribed:false, priceRub:199, subscriptionDays:30, error:true };
+    }
+    render();
+  }
+
+  async function startSubscribePayment(){
+    const token = localStorage.getItem('apex-license-token');
+    if(!token) return;
+    const btn = document.getElementById('payBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Открываем оплату…'; }
+    try{
+      const r = await fetch(API_BASE + '/api/subscribe', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      const data = await r.json();
+      if(data.confirmationUrl){
+        location.href = data.confirmationUrl;
+      } else {
+        if(btn){ btn.disabled = false; btn.textContent = 'Не получилось, попробуй ещё раз'; }
+      }
+    }catch(e){
+      if(btn){ btn.disabled = false; btn.textContent = 'Не получилось, попробуй ещё раз'; }
+    }
+  }
+
+  function renderLicenseLoading(){
+    root.innerHTML = `
+      <div class="app" style="align-items:center;justify-content:center;">
+        <span class="hint">Проверяем доступ…</span>
+      </div>
+    `;
+  }
+
+  function renderPaywall(){
+    root.innerHTML = `
+      <div class="app">
+        <div class="welcome">
+          <h1 style="font-size:9vw;">ПРОБНЫЙ<br>ПЕРИОД<br>ЗАКОНЧИЛСЯ</h1>
+          <p class="sub">Чтобы продолжить пользоваться APEX — оформи подписку</p>
+          <div class="stat-card" style="width:100%; max-width:380px; text-align:center;">
+            <div class="stat-value" style="font-size:34px;">${license.priceRub}₽<small style="font-size:15px;"> / ${license.subscriptionDays} дней</small></div>
+          </div>
+          <button class="cta-btn" id="payBtn">Оплатить</button>
+          <button class="preset-icon-btn" id="recheckBtn" style="width:auto; padding:0 16px; border-radius:16px; height:44px;">Я уже оплатил — проверить</button>
+        </div>
+      </div>
+    `;
+    document.getElementById('payBtn').addEventListener('click', startSubscribePayment);
+    document.getElementById('recheckBtn').addEventListener('click', () => {
+      license.loading = true;
+      render();
+      initLicense();
+    });
+  }
+
   const PLATE_COLORS = ['var(--plate-1)','var(--plate-2)','var(--plate-3)','var(--plate-4)','var(--plate-5)','var(--plate-6)'];
   const BANDS = [
     { key: 'green',  name: 'Зелёная',     hex: '#3E9B5C', points: 10 },
@@ -1053,6 +1159,7 @@
   ];
   function bandByKey(k){ return BANDS.find(b => b.key === k); }
   function bandPoints(b){
+
     if(typeof b === 'string'){ const def = bandByKey(b); return def ? def.points : 0; }
     return 0; // старые числовые записи (кг/физика) больше не конвертируем в баллы
   }
@@ -2181,6 +2288,8 @@
   });
 
   function render(bump){
+    if(license.loading){ renderLicenseLoading(); return; }
+    if(!license.hasAccess){ renderPaywall(); return; }
     if(phase === 'welcome'){ renderWelcome(); }
     else if(phase === 'setup'){ renderSetup(); }
     else { renderWorkout(bump); }
@@ -2210,6 +2319,10 @@
         <div class="welcome">
           <h1>ЗДАРОВА,<br>ДРЫЩ!</h1>
           <p class="sub">Ну что, поработаем?</p>
+          ${(!license.subscribed && license.trialDaysLeft !== null && !license.error) ? `
+          <div class="stat-sub" style="background:var(--bg-panel); border:1px solid var(--panel-border); border-radius:12px; padding:8px 14px;">
+            🎁 Пробный период: осталось ${license.trialDaysLeft} дн.
+          </div>` : ''}
           ${presets.length ? `<div class="preset-list">${presetCards}</div>` : ''}
           <button class="cta-btn" id="startBtn">${presets.length ? 'Новая тренировка' : 'Погнали 💪'}</button>
         </div>
@@ -2666,6 +2779,7 @@
   }
 
   loadState();
+  initLicense();
 })();
 </script>
 
